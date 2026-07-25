@@ -19,3 +19,6 @@ turnstilePatch/
 *.log
 screenshots/
 .DS_Store
+
+# spec-workflow tool scaffolding (not project code)
+.spec-workflow/
