@@ -454,11 +454,11 @@ def fetch_proxies(access_token, account_id):
 
 
 def save_proxies(user, pwd, proxies, path):
-    """追加写入本轮代理文件，格式 user:pass@ip:port（可直接喂给多数工具）。"""
+    """追加写入本轮代理文件，格式 http://user:pass@ip:port（可直接喂给多数工具）。"""
     with _file_lock:
         with open(path, "a", encoding="utf-8") as f:
             for ip in proxies:
-                f.write(f"{user}:{pwd}@{ip}\n")
+                f.write(f"http://{user}:{pwd}@{ip}\n")
 
 
 # ── 单个账号注册（并发 worker）───────────────────────────
@@ -610,8 +610,13 @@ def run_round(count, threads, headless, mail_provider):
 
     dt = time.time() - t0
     total_proxies = sum(r.get("proxy_count", 0) for r in ok)
+    # 真成功 = 落盘且拿到代理；半成品 = 落盘但 proxy_count=0（token 有效、无代理）
+    success = [r for r in ok if r.get("proxy_count", 0) > 0]
+    partial = [r for r in ok if r.get("proxy_count", 0) <= 0]
+    failed = count - len(ok)
     print("\n" + "=" * 52)
-    print(f"  完成 {len(ok)}/{count}  ·  用时 {dt:.0f}s  ·  代理共 {total_proxies} 个")
+    print(f"  用时 {dt:.0f}s  ·  成功 {len(success)}  ·  半成品 {len(partial)}  ·  失败 {failed}  /  共 {count}")
+    print(f"  代理节点共 {total_proxies} 个")
     print(f"  账号 → account/{os.path.basename(acc_file)}")
     print(f"  代理 → node/{os.path.basename(node_file)}")
     for r in ok:
@@ -620,13 +625,17 @@ def run_round(count, threads, headless, mail_provider):
 
 
 def main():
-    # 跑完一轮不退出，回到引导继续；注册数量输 0 退出
-    while True:
-        count, threads, headless, mail_provider = guide()
-        if count <= 0:
-            print("已退出。")
-            return 0
-        run_round(count, threads, headless, mail_provider)
+    # 跑完一轮即结束，等用户按键退出（不再回引导循环）
+    count, threads, headless, mail_provider = guide()
+    if count <= 0:
+        print("已退出。")
+        return 0
+    run_round(count, threads, headless, mail_provider)
+    try:
+        input("按任意键退出…")
+    except EOFError:
+        pass
+    return 0
 
 
 if __name__ == "__main__":
