@@ -32,6 +32,20 @@ YYDS_KEY = os.environ.get("YYDS_API_KEY", "").strip()
 YYDS_DOMAIN = os.environ.get("YYDS_DOMAIN", "").strip()
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
+STAGEWISE2API_PATH = os.environ.get(
+    "STAGEWISE2API_PATH",
+    os.path.abspath(os.path.join(_BASE, "..", "stagewise2api")),
+).strip()
+
+MAIL_CHANNELS = (
+    ("auto_zero_config", "自动回退（推荐）"),
+    ("tempmail_lol", "TempMail.lol"),
+    ("fce_areueally", "FreeCustom areueally"),
+    ("fce_ditpay", "FreeCustom ditpay"),
+    ("gonebox", "GoneBox"),
+    ("yyds", "YYDS Mail（需要 YYDS_API_KEY）"),
+)
+AUTO_MAIL_PROVIDERS = ("gonebox", "fce_ditpay", "fce_areueally")
 
 # ProxyScrape dashboard
 PS_BASE = "https://dashboard.proxyscrape.com"
@@ -43,11 +57,23 @@ PS_RESEND = f"{PS_BASE}/v2/v4/account/reset-verification-code"
 PS_SIGNUP_PAGE = f"{PS_BASE}/v2/sign-up"
 PS_SITEKEY = "0x4AAAAAAAFWUVCKyusT9T8r"
 
-# turnstilePatch 扩展：默认读取项目内目录，也可通过环境变量覆盖
-EXTENSION_PATH = os.environ.get(
-    "TURNSTILE_EXTENSION_PATH",
+# turnstilePatch 扩展：环境变量优先，其次项目内和相邻工具仓库。
+_EXTENSION_CANDIDATES = (
+    os.environ.get("TURNSTILE_EXTENSION_PATH", "").strip(),
     os.path.join(_BASE, "turnstilePatch"),
-).strip()
+    os.path.abspath(os.path.join(_BASE, "..", "AI-Account-Toolkit", "grokregister", "turnstilePatch")),
+)
+EXTENSION_PATH = next((path for path in _EXTENSION_CANDIDATES if path and os.path.isdir(path)),
+                      _EXTENSION_CANDIDATES[1])
+
+_BROWSER_CANDIDATES = (
+    os.environ.get("CHROME_PATH", "").strip(),
+    os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
+    os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+)
+BROWSER_PATH = next((path for path in _BROWSER_CANDIDATES if path and os.path.isfile(path)), "")
+BROWSER_PROXY = (os.environ.get("CHROME_PROXY") or os.environ.get("HTTPS_PROXY")
+                 or os.environ.get("HTTP_PROXY") or "").strip()
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
@@ -133,6 +159,73 @@ def yyds_wait_code(address, timeout=180, interval=5):
     raise TimeoutError("等验证码超时")
 
 
+def _load_mail_client(provider):
+    if not os.path.isdir(STAGEWISE2API_PATH):
+        raise RuntimeError(f"找不到 stagewise2api: {STAGEWISE2API_PATH}")
+    if STAGEWISE2API_PATH not in sys.path:
+        sys.path.insert(0, STAGEWISE2API_PATH)
+    from any2api.mail_providers import create_mail_client
+    return create_mail_client({"mail": {"provider": provider}})
+
+
+def create_mailbox(provider):
+    if provider == "yyds":
+        email, token = yyds_create_mailbox()
+        return email, token, None, provider
+    client = _load_mail_client(provider)
+    info = client.create_address(logger=log)
+    actual_provider = getattr(client, "provider_id", provider)
+    email = info["email"]
+    log(f"临时邮箱: {email}（{actual_provider}）")
+    return email, info.get("mail_token"), client, actual_provider
+
+
+def _extract_verification_code(message):
+    def strings(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                yield from strings(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                yield from strings(item)
+        elif isinstance(value, str):
+            yield value
+
+    text = _html.unescape(re.sub(r"<[^>]+>", " ", " ".join(strings(message))))
+    match = re.search(r"verification code:\s*([A-Za-z0-9]{6,})", text, re.I)
+    return match.group(1) if match else None
+
+
+def wait_mail_code(address, token, client, provider, timeout=180, interval=5):
+    if provider == "yyds":
+        return yyds_wait_code(address, timeout=timeout, interval=interval)
+    deadline = time.time() + timeout
+    seen = set()
+    while time.time() < deadline:
+        try:
+            messages = client.list_messages(token)
+            for item in messages:
+                if not isinstance(item, dict):
+                    continue
+                mid = next((item.get(key) for key in
+                            ("id", "@id", "messageID", "message_id", "msgid", "uid", "mail_id", "_id")
+                            if item.get(key)), None)
+                key = str(mid or item)
+                if key in seen:
+                    continue
+                detail = client.get_message(token, mid) if mid else None
+                message = detail if isinstance(detail, dict) else item
+                code = _extract_verification_code(message)
+                seen.add(key)
+                if code:
+                    log(f"收到验证码: {code}  (主题: {message.get('subject')})")
+                    return code
+        except Exception as exc:
+            log(f"[邮箱 {provider}] 收信失败: {exc}")
+        time.sleep(interval)
+    raise TimeoutError("等验证码超时")
+
+
 # ── 本地打码：浏览器只出 token ───────────────────────────
 # 触发 widget 挂载：填占位表单（token 不绑定表单内容，随便填合法值即可）
 _FILL_JS = r"""
@@ -145,6 +238,7 @@ function setVal(el,val){
 var email=document.querySelector('input[type=email]');
 var pwds=document.querySelectorAll('input[type=password]');
 var chk=document.querySelector('input[type=checkbox]');
+if(!email || pwds.length < 2 || !chk) return 'missing-form';
 if(email) setVal(email,'warmup'+Date.now()+'@example.com');
 if(pwds[0]) setVal(pwds[0],'Warmup123!9');
 if(pwds[1]) setVal(pwds[1],'Warmup123!9');
@@ -179,6 +273,12 @@ def solve_turnstile(headless=False, timeout=90):
 
     opts = ChromiumOptions()
     opts.auto_port()  # 每个实例独立端口 + 独立临时用户目录（支持并发多开）
+    opts.set_load_mode("eager")
+    opts.set_timeouts(base=3, page_load=30, script=30)
+    if BROWSER_PATH:
+        opts.set_browser_path(BROWSER_PATH)
+    if BROWSER_PROXY:
+        opts.set_proxy(BROWSER_PROXY)
     for flag in ("--no-first-run", "--no-sandbox", "--disable-dev-shm-usage",
                  "--disable-background-networking", "--mute-audio",
                  "--disable-gpu", "--window-size=1280,900"):
@@ -193,7 +293,8 @@ def solve_turnstile(headless=False, timeout=90):
         log(f"[!] 找不到 turnstilePatch 扩展: {EXTENSION_PATH}")
 
     browser = Chromium(opts)
-    tab = browser.latest_tab
+    tab = browser.new_tab()
+    browser.close_tabs(tab, others=True)
     if headless:
         try:
             tab.set.window.hide()   # Windows 下真正隐藏窗口，进程照常渲染，Turnstile 不受影响
@@ -201,11 +302,20 @@ def solve_turnstile(headless=False, timeout=90):
             pass
     try:
         log("浏览器打开 sign-up 页…")
-        tab.get(PS_SIGNUP_PAGE)
+        for attempt in range(1, 4):
+            tab.get(PS_SIGNUP_PAGE, retry=0, timeout=30)
+            if str(tab.url).startswith(PS_BASE):
+                break
+            log(f"注册页第 {attempt}/3 次加载失败: {tab.url}")
+            time.sleep(2)
+        else:
+            raise RuntimeError(f"注册页加载失败，当前地址: {tab.url}")
         time.sleep(5)
 
         # 填占位表单触发 widget 挂载（不填不 render）
-        tab.run_js(_FILL_JS)
+        fill_state = tab.run_js(_FILL_JS)
+        if fill_state != "filled":
+            raise RuntimeError(f"注册页表单未就绪: {fill_state} ({tab.url})")
         log("表单已填，预热 Turnstile…")
         time.sleep(2)
         try:
@@ -215,6 +325,8 @@ def solve_turnstile(headless=False, timeout=90):
 
         deadline = time.time() + timeout
         while time.time() < deadline:
+            if not str(tab.url).startswith(PS_BASE):
+                raise RuntimeError(f"注册页意外离开: {tab.url}")
             token = str(tab.run_js(_GET_TOKEN_JS) or "").strip()
             if len(token) >= 80:
                 log(f"Turnstile 通过，token 长度={len(token)}")
@@ -241,6 +353,23 @@ def solve_turnstile(headless=False, timeout=90):
                     except Exception:
                         pass
             time.sleep(1.2)
+        try:
+            state = tab.run_js(r"""
+return {
+  url: location.href,
+  title: document.title,
+  body: String(document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 300),
+  hiddenInput: !!document.querySelector('input[name="cf-turnstile-response"]'),
+  iframeCount: document.querySelectorAll('iframe').length,
+  turnstile: typeof window.turnstile
+};
+""")
+            screenshot = os.path.join(_BASE, "screenshots", f"turnstile_{int(time.time())}.png")
+            os.makedirs(os.path.dirname(screenshot), exist_ok=True)
+            tab.get_screenshot(path=screenshot)
+            log(f"Turnstile 超时状态: {state}；截图: {screenshot}")
+        except Exception as exc:
+            log(f"Turnstile 超时取证失败: {exc}")
         raise TimeoutError("Turnstile 求解超时")
     finally:
         try:
@@ -339,18 +468,18 @@ def save_account(rec, path):
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-def _register_once(headless, node_file):
+def _register_once(headless, node_file, mail_provider):
     """单次尝试：建邮箱→打码→注册→验证→拉代理。返回 rec（不落盘账号）。
     建邮箱/打码/注册任一失败抛异常，交给外层重试。"""
     password = "Ps" + "".join(random.choices(string.ascii_letters + string.digits, k=10)) + "!9"
-    email, _ = yyds_create_mailbox()               # 失败抛异常 → 外层重试
+    email, mail_token, mail_client, actual_mail_provider = create_mailbox(mail_provider)
     token = solve_turnstile(headless=headless)     # 失败抛异常 → 外层重试
     session, access_token, userdata = register(email, password, token)  # 同上
 
     verified = False
     try:
         resend_code(session, access_token)
-        code = yyds_wait_code(email, timeout=180)
+        code = wait_mail_code(email, mail_token, mail_client, actual_mail_provider, timeout=180)
         verified = verify_email(session, access_token, code)
     except Exception as e:
         log(f"[!] 邮箱验证环节: {e}（账号已注册，token 有效）")
@@ -374,6 +503,7 @@ def _register_once(headless, node_file):
 
     return {
         "email": email, "password": password,
+        "mail_provider": actual_mail_provider,
         "access_token": access_token, "userData": userdata,
         "verified": verified,
         "proxy_username": p_user, "proxy_password": p_pass, "proxy_count": p_count,
@@ -381,7 +511,7 @@ def _register_once(headless, node_file):
     }
 
 
-def register_one(idx, headless, acc_file, node_file, max_attempts=3):
+def register_one(idx, headless, acc_file, node_file, mail_provider, max_attempts=3):
     """账号级重试：任一步异常或没拿到代理，就换新邮箱重来，直到成功或用尽。
     成功（拿到代理）落盘并返回；用尽则落盘最后一次半成品（token 有效、无代理）。"""
     _tls.tag = f" #{idx}"
@@ -390,7 +520,11 @@ def register_one(idx, headless, acc_file, node_file, max_attempts=3):
         if attempt > 1:
             log(f"—— 第 {attempt}/{max_attempts} 次尝试 ——")
         try:
-            rec = _register_once(headless, node_file)
+            attempt_provider = (AUTO_MAIL_PROVIDERS[(attempt - 1) % len(AUTO_MAIL_PROVIDERS)]
+                                if mail_provider == "auto_zero_config" else mail_provider)
+            if mail_provider == "auto_zero_config":
+                log(f"自动邮箱本次使用: {attempt_provider}")
+            rec = _register_once(headless, node_file, attempt_provider)
         except Exception as e:
             log(f"[x] 本次尝试失败: {str(e)[:120]}")
             rec = None
@@ -424,26 +558,37 @@ def guide():
     print("=" * 52)
     print("   ProxyScrape 批量注册机  ·  本地打码走协议")
     print("   浏览器只出 Turnstile token，注册/收信/验证全走 HTTP")
-    print("   临时邮箱: YYDS Mail   账号→account/  代理→node/")
+    print("   临时邮箱: 可选渠道    账号→account/  代理→node/")
     print("=" * 52)
     try:
         count = int(_ask("① 注册数量        [默认 5，输 0 退出]: ", "5"))
     except ValueError:
         count = 5
+    if count <= 0:
+        return count, 1, True, MAIL_CHANNELS[0][0]
     try:
         threads = int(_ask("② 并发线程        [默认 3]: ", "3"))
     except ValueError:
         threads = 3
     hl = _ask("③ 隐藏浏览器窗口   [Y/n]: ", "Y").lower()
     headless = not hl.startswith("n")
+    print("④ 邮箱渠道:")
+    for index, (_, name) in enumerate(MAIL_CHANNELS, 1):
+        print(f"   {index}. {name}")
+    while True:
+        selected = _ask("   请选择 [默认 1]: ", "1")
+        if selected.isdigit() and 1 <= int(selected) <= len(MAIL_CHANNELS):
+            mail_provider, mail_name = MAIL_CHANNELS[int(selected) - 1]
+            break
+        print("   选择无效，请输入菜单编号。")
     threads = max(1, min(threads, count, 8))  # 并发上限 8，别把机器压垮
     print("-" * 52)
-    print(f"  → 注册 {count} 个 · 并发 {threads} · {'隐藏窗口' if headless else '显示窗口'}")
+    print(f"  → 注册 {count} 个 · 并发 {threads} · {'隐藏窗口' if headless else '显示窗口'} · {mail_name}")
     print("-" * 52)
-    return count, threads, headless
+    return count, threads, headless, mail_provider
 
 
-def run_round(count, threads, headless):
+def run_round(count, threads, headless, mail_provider):
     # 每轮独立文件（时间戳命名），不追加旧文件
     ts = time.strftime("%Y%m%d_%H%M%S")
     acc_file = os.path.join(_ACCOUNT_DIR, f"accounts_{ts}.jsonl")
@@ -451,7 +596,7 @@ def run_round(count, threads, headless):
     t0 = time.time()
     ok = []
     with ThreadPoolExecutor(max_workers=threads) as ex:
-        futs = {ex.submit(register_one, i + 1, headless, acc_file, node_file): i + 1
+        futs = {ex.submit(register_one, i + 1, headless, acc_file, node_file, mail_provider): i + 1
                 for i in range(count)}
         for fu in as_completed(futs):
             try:
@@ -477,11 +622,11 @@ def run_round(count, threads, headless):
 def main():
     # 跑完一轮不退出，回到引导继续；注册数量输 0 退出
     while True:
-        count, threads, headless = guide()
+        count, threads, headless, mail_provider = guide()
         if count <= 0:
             print("已退出。")
             return 0
-        run_round(count, threads, headless)
+        run_round(count, threads, headless, mail_provider)
 
 
 if __name__ == "__main__":

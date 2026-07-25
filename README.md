@@ -32,9 +32,12 @@ ProxyScrape 注册与代理导出工具。浏览器仅用于获取 Turnstile tok
 
 安装 Python 依赖：
 
-```bash
-python -m pip install requests DrissionPage PyJWT
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+`启动注册.bat` 会优先使用项目内的 `.venv`。
 
 ## 本地隐私配置
 
@@ -42,9 +45,10 @@ python -m pip install requests DrissionPage PyJWT
 
 | 环境变量 | 必需 | 说明 |
 |----------|------|------|
-| `YYDS_API_KEY` | 是 | YYDS Mail API Key |
+| `YYDS_API_KEY` | 仅 YYDS 渠道 | YYDS Mail API Key |
 | `YYDS_DOMAIN` | 否 | 已在 YYDS 验证的自有域名；留空则由 YYDS 选择域名 |
-| `TURNSTILE_EXTENSION_PATH` | 是 | 本机 `turnstilePatch` 目录 |
+| `TURNSTILE_EXTENSION_PATH` | 否 | 本机 `turnstilePatch` 目录；未设置时自动检查项目内及相邻 AI-Account-Toolkit 仓库 |
+| `CHROME_PROXY` | 否 | 浏览器代理；默认继承 `HTTPS_PROXY` 或 `HTTP_PROXY` |
 | `PYTHON_EXE` | 否 | `启动注册.bat` 使用的 Python；默认使用 PATH 中的 `python` |
 
 PowerShell 当前窗口配置示例：
