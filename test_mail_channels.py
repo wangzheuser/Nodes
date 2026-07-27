@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import proxyscrape_register as app
+from mail_providers import FreeCustomAreueallyClient, create_mail_client
 
 
 class MailChannelTest(unittest.TestCase):
@@ -20,6 +21,11 @@ class MailChannelTest(unittest.TestCase):
             "d253ff02f7",
         )
         self.assertEqual(app.AUTO_MAIL_PROVIDERS, ("gonebox", "fce_ditpay", "fce_areueally"))
+
+    def test_mail_client_is_loaded_from_this_project(self):
+        client = create_mail_client({"mail": {"provider": "fce_areueally"}})
+        self.assertIsInstance(client, FreeCustomAreueallyClient)
+        self.assertEqual(app._load_mail_client("fce_areueally").domain, "areueally.info")
 
 
 if __name__ == "__main__":

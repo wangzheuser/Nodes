@@ -32,10 +32,6 @@ YYDS_KEY = os.environ.get("YYDS_API_KEY", "").strip()
 YYDS_DOMAIN = os.environ.get("YYDS_DOMAIN", "").strip()
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
-STAGEWISE2API_PATH = os.environ.get(
-    "STAGEWISE2API_PATH",
-    os.path.abspath(os.path.join(_BASE, "..", "stagewise2api")),
-).strip()
 
 MAIL_CHANNELS = (
     ("auto_zero_config", "自动回退（推荐）"),
@@ -57,11 +53,10 @@ PS_RESEND = f"{PS_BASE}/v2/v4/account/reset-verification-code"
 PS_SIGNUP_PAGE = f"{PS_BASE}/v2/sign-up"
 PS_SITEKEY = "0x4AAAAAAAFWUVCKyusT9T8r"
 
-# turnstilePatch 扩展：环境变量优先，其次项目内和相邻工具仓库。
+# turnstilePatch 扩展：环境变量优先，其次使用项目内副本。
 _EXTENSION_CANDIDATES = (
     os.environ.get("TURNSTILE_EXTENSION_PATH", "").strip(),
     os.path.join(_BASE, "turnstilePatch"),
-    os.path.abspath(os.path.join(_BASE, "..", "AI-Account-Toolkit", "grokregister", "turnstilePatch")),
 )
 EXTENSION_PATH = next((path for path in _EXTENSION_CANDIDATES if path and os.path.isdir(path)),
                       _EXTENSION_CANDIDATES[1])
@@ -160,11 +155,7 @@ def yyds_wait_code(address, timeout=180, interval=5):
 
 
 def _load_mail_client(provider):
-    if not os.path.isdir(STAGEWISE2API_PATH):
-        raise RuntimeError(f"找不到 stagewise2api: {STAGEWISE2API_PATH}")
-    if STAGEWISE2API_PATH not in sys.path:
-        sys.path.insert(0, STAGEWISE2API_PATH)
-    from any2api.mail_providers import create_mail_client
+    from mail_providers import create_mail_client
     return create_mail_client({"mail": {"provider": provider}})
 
 

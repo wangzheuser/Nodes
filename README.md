@@ -19,7 +19,9 @@ ProxyScrape 注册与代理导出工具。浏览器仅用于获取 Turnstile tok
 | 文件 | 说明 |
 |------|------|
 | `proxyscrape_register.py` | 交互式注册、邮箱验证与代理导出入口 |
+| `mail_providers.py` | 项目内置的零配置临时邮箱客户端 |
 | `proxyscrape_auth.py` | ProxyScrape 登录、注册与 Token 管理封装 |
+| `turnstilePatch/` | 项目内置的浏览器扩展 |
 | `启动注册.bat` | Windows 启动脚本 |
 | `account/` | 本地账号与 Token 输出，不进入 Git |
 | `node/` | 本地代理账号和节点输出，不进入 Git |
@@ -47,7 +49,7 @@ python -m venv .venv
 |----------|------|------|
 | `YYDS_API_KEY` | 仅 YYDS 渠道 | YYDS Mail API Key |
 | `YYDS_DOMAIN` | 否 | 已在 YYDS 验证的自有域名；留空则由 YYDS 选择域名 |
-| `TURNSTILE_EXTENSION_PATH` | 否 | 本机 `turnstilePatch` 目录；未设置时自动检查项目内及相邻 AI-Account-Toolkit 仓库 |
+| `TURNSTILE_EXTENSION_PATH` | 否 | 自定义 `turnstilePatch` 目录；默认使用项目内副本 |
 | `CHROME_PROXY` | 否 | 浏览器代理；默认继承 `HTTPS_PROXY` 或 `HTTP_PROXY` |
 | `PYTHON_EXE` | 否 | `启动注册.bat` 使用的 Python；默认使用 PATH 中的 `python` |
 

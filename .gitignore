@@ -12,9 +12,6 @@ proxyscrape_token.json
 account/
 node/
 
-# Local browser extension; configure TURNSTILE_EXTENSION_PATH instead
-turnstilePatch/
-
 # Runtime artifacts
 *.log
 screenshots/
