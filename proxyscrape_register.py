@@ -262,7 +262,12 @@ def solve_turnstile(headless=False, timeout=90):
     closed shadow DOM 点 checkbox，拿到 cf-turnstile-response。"""
     from DrissionPage import Chromium, ChromiumOptions
 
+    from browser_tmp import browser_tmp_root
+
     opts = ChromiumOptions()
+    # 必须在 auto_port() 之前设置：auto_port 会立刻用 tmp_path 定位端口数据目录，
+    # 该目录随后被当作浏览器 user-data-dir，之后再改就不生效了。
+    opts.set_tmp_path(browser_tmp_root())
     opts.auto_port()  # 每个实例独立端口 + 独立临时用户目录（支持并发多开）
     opts.set_load_mode("eager")
     opts.set_timeouts(base=3, page_load=30, script=30)
