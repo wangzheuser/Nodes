@@ -20,7 +20,20 @@ class MailChannelTest(unittest.TestCase):
             app.wait_mail_code("user@example.test", "token", FakeClient(), "fake", timeout=1, interval=1),
             "d253ff02f7",
         )
-        self.assertEqual(app.AUTO_MAIL_PROVIDERS, ("gonebox", "fce_ditpay", "fce_areueally"))
+        self.assertEqual(
+            app.AUTO_MAIL_PROVIDERS,
+            ("gonebox",),
+        )
+
+    def test_verified_account_without_proxies_retries_gonebox(self):
+        partial = {"email": "partial@example.test", "verified": True, "proxy_count": 0}
+        success = {"email": "success@example.test", "verified": True, "proxy_count": 100}
+        with patch.object(app, "_register_once", side_effect=[partial, success]) as run, \
+             patch.object(app, "save_account") as save:
+            result = app.register_one(1, True, "accounts.jsonl", "proxies.txt", "auto_zero_config", 2)
+            self.assertIs(result, success)
+        self.assertEqual([item.args[2] for item in run.call_args_list], ["gonebox", "gonebox"])
+        save.assert_called_once_with(success, "accounts.jsonl")
 
     def test_mail_client_is_loaded_from_this_project(self):
         client = create_mail_client({"mail": {"provider": "fce_areueally"}})

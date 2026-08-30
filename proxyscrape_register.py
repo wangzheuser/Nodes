@@ -34,14 +34,14 @@ YYDS_DOMAIN = os.environ.get("YYDS_DOMAIN", "").strip()
 _BASE = os.path.dirname(os.path.abspath(__file__))
 
 MAIL_CHANNELS = (
-    ("auto_zero_config", "自动回退（推荐）"),
-    ("tempmail_lol", "TempMail.lol"),
+    ("auto_zero_config", "GoneBox 自动重试（推荐）"),
+    ("tempmail_lol", "TempMail.lol（仅账号，无试用节点）"),
     ("fce_areueally", "FreeCustom areueally"),
     ("fce_ditpay", "FreeCustom ditpay"),
     ("gonebox", "GoneBox"),
     ("yyds", "YYDS Mail（需要 YYDS_API_KEY）"),
 )
-AUTO_MAIL_PROVIDERS = ("gonebox", "fce_ditpay", "fce_areueally")
+AUTO_MAIL_PROVIDERS = ("gonebox",)
 
 # ProxyScrape dashboard
 PS_BASE = "https://dashboard.proxyscrape.com"
@@ -333,7 +333,8 @@ def solve_turnstile(headless=False, timeout=90):
             if ci:
                 try:
                     wrapper = ci.parent()
-                    iframe = wrapper.shadow_root.ele("tag:iframe", timeout=2)
+                    host = wrapper.ele("tag:div", timeout=2)
+                    iframe = host.shadow_root.ele("tag:iframe", timeout=2)
                 except Exception:
                     iframe = None
                 if iframe:
@@ -494,6 +495,8 @@ def _register_once(headless, node_file, mail_provider):
                 save_proxies(p_user, p_pass, plist, node_file)
                 p_count = len(plist)
                 log(f"拉取代理 {p_count} 个")
+            else:
+                log("当前邮箱未获试用代理服务")
         except Exception as e:
             log(f"[!] 拉代理失败: {e}")
 
@@ -508,8 +511,7 @@ def _register_once(headless, node_file, mail_provider):
 
 
 def register_one(idx, headless, acc_file, node_file, mail_provider, max_attempts=3):
-    """账号级重试：任一步异常或没拿到代理，就换新邮箱重来，直到成功或用尽。
-    成功（拿到代理）落盘并返回；用尽则落盘最后一次半成品（token 有效、无代理）。"""
+    """账号级重试：任一步异常或没拿到代理，就换新邮箱重来，直到成功或用尽。"""
     _tls.tag = f" #{idx}"
     last = None
     for attempt in range(1, max_attempts + 1):
@@ -606,7 +608,6 @@ def run_round(count, threads, headless, mail_provider):
 
     dt = time.time() - t0
     total_proxies = sum(r.get("proxy_count", 0) for r in ok)
-    # 真成功 = 落盘且拿到代理；半成品 = 落盘但 proxy_count=0（token 有效、无代理）
     success = [r for r in ok if r.get("proxy_count", 0) > 0]
     partial = [r for r in ok if r.get("proxy_count", 0) <= 0]
     failed = count - len(ok)
