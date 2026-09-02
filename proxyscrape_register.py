@@ -211,6 +211,8 @@ def _apply_proxy(proxy):
     if proxy:
         for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
             os.environ[key] = proxy
+        for key in ("NO_PROXY", "no_proxy"):
+            os.environ[key] = "localhost,127.0.0.1,::1"
 
 
 def _apply_browser_proxy(options):
@@ -408,14 +410,14 @@ def solve_turnstile(headless=False, timeout=90):
         log(f"[!] 找不到 turnstilePatch 扩展: {EXTENSION_PATH}")
 
     browser = Chromium(opts)
-    tab = browser.new_tab()
-    browser.close_tabs(tab, others=True)
-    if headless:
-        try:
-            tab.set.window.hide()   # Windows 下真正隐藏窗口，进程照常渲染，Turnstile 不受影响
-        except Exception:
-            pass
     try:
+        tab = browser.new_tab()
+        browser.close_tabs(tab, others=True)
+        if headless:
+            try:
+                tab.set.window.hide()   # Windows 下真正隐藏窗口，进程照常渲染，Turnstile 不受影响
+            except Exception:
+                pass
         log("浏览器打开 sign-up 页…")
         for attempt in range(1, 4):
             tab.get(PS_SIGNUP_PAGE, retry=0, timeout=30)

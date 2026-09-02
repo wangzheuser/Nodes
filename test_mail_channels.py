@@ -100,7 +100,11 @@ class MailChannelTest(unittest.TestCase):
             self.assertEqual(app.BROWSER_PROXY, "http://127.0.0.1:7890")
             self.assertEqual(os.environ["HTTP_PROXY"], app.BROWSER_PROXY)
             self.assertEqual(os.environ["HTTPS_PROXY"], app.BROWSER_PROXY)
-            self.assertNotIn("NO_PROXY", os.environ)
+            self.assertEqual(os.environ["NO_PROXY"], "localhost,127.0.0.1,::1")
+            local_settings = requests.Session().merge_environment_settings(
+                "http://127.0.0.1:9222", {}, None, None, None
+            )
+            self.assertEqual(local_settings["proxies"], {})
             settings = requests.Session().merge_environment_settings(
                 "https://example.test", {}, None, None, None
             )
