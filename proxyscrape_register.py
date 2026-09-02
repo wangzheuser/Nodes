@@ -24,6 +24,7 @@ import threading
 import html as _html
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlsplit
 
 # ── 配置 ────────────────────────────────────────────────
 # YYDS Mail（临时邮箱）
@@ -32,6 +33,7 @@ YYDS_KEY = os.environ.get("YYDS_API_KEY", "").strip()
 YYDS_DOMAIN = os.environ.get("YYDS_DOMAIN", "").strip()
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
+_PROXY_CONFIG_PATH = os.path.join(_BASE, "proxy_config.json")
 
 MAIL_CHANNELS = (
     ("auto_zero_config", "GoneBox 自动重试（推荐）"),
@@ -67,8 +69,7 @@ _BROWSER_CANDIDATES = (
     os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
 )
 BROWSER_PATH = next((path for path in _BROWSER_CANDIDATES if path and os.path.isfile(path)), "")
-BROWSER_PROXY = (os.environ.get("CHROME_PROXY") or os.environ.get("HTTPS_PROXY")
-                 or os.environ.get("HTTP_PROXY") or "").strip()
+BROWSER_PROXY = ""
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
@@ -96,6 +97,125 @@ def log(msg):
     tag = getattr(_tls, "tag", "")
     with _print_lock:
         print(f"[{time.strftime('%H:%M:%S')}]{tag} {msg}", flush=True)
+
+
+def _environment_proxy():
+    return (os.environ.get("CHROME_PROXY") or os.environ.get("HTTPS_PROXY")
+            or os.environ.get("HTTP_PROXY") or "").strip()
+
+
+def _normalize_proxy(value):
+    """校验并规范化 HTTP/HTTPS 代理地址；host:port 默认按 HTTP 处理。"""
+    value = value.strip()
+    if not value:
+        return ""
+    if "://" not in value:
+        value = f"http://{value}"
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("端口格式无效") from exc
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError("仅支持 http:// 或 https:// 代理")
+    if not parsed.hostname or port is None or not (1 <= port <= 65535):
+        raise ValueError("代理地址必须包含有效的主机和端口")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ValueError("代理地址不能包含路径、查询参数或片段")
+    return value
+
+
+def _mask_proxy(proxy):
+    """隐藏代理 URL 中的用户名和密码，避免凭据出现在控制台。"""
+    if not proxy:
+        return "直连"
+    prefix, separator, rest = proxy.partition("://")
+    if not separator or "@" not in rest:
+        return proxy
+    credentials, host = rest.rsplit("@", 1)
+    masked = "***:***" if ":" in credentials else "***"
+    return f"{prefix}://{masked}@{host}"
+
+
+def _load_proxy_preference():
+    """读取本地选择；无有效本地配置时回退到环境变量。"""
+    if os.path.isfile(_PROXY_CONFIG_PATH):
+        try:
+            with open(_PROXY_CONFIG_PATH, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                raise ValueError("配置根节点必须是对象")
+            if data.get("mode") == "direct":
+                return ""
+            if data.get("mode") == "proxy":
+                proxy = _normalize_proxy(str(data.get("proxy", "")))
+                if not proxy:
+                    raise ValueError("proxy 模式缺少代理地址")
+                return proxy
+            raise ValueError("mode 必须是 proxy 或 direct")
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            log(f"[!] 本地代理配置无效，改用环境变量: {exc}")
+    env_proxy = _environment_proxy()
+    if not env_proxy:
+        return ""
+    try:
+        return _normalize_proxy(env_proxy)
+    except ValueError as exc:
+        log(f"[!] 环境变量代理无效，本轮默认直连: {exc}")
+        return ""
+
+
+def _save_proxy_preference(proxy):
+    data = {"mode": "proxy", "proxy": proxy} if proxy else {"mode": "direct", "proxy": ""}
+    temp_path = f"{_PROXY_CONFIG_PATH}.{os.getpid()}.tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, _PROXY_CONFIG_PATH)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def _choose_proxy():
+    default = _load_proxy_preference()
+    while True:
+        shown = _mask_proxy(default)
+        value = _ask(f"④ 代理地址 [默认 {shown}；输入 direct 直连]: ", "")
+        if not value:
+            proxy = default
+        elif value.lower() == "direct":
+            proxy = ""
+        else:
+            try:
+                proxy = _normalize_proxy(value)
+            except ValueError as exc:
+                print(f"   代理地址无效: {exc}")
+                continue
+        _save_proxy_preference(proxy)
+        print(f"   使用代理: {_mask_proxy(proxy)}")
+        return proxy
+
+
+def _apply_proxy(proxy):
+    """将统一代理应用到浏览器和当前进程内的所有 requests 请求。"""
+    global BROWSER_PROXY
+    BROWSER_PROXY = proxy
+    proxy_keys = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                  "http_proxy", "https_proxy", "all_proxy", "no_proxy")
+    for key in proxy_keys:
+        os.environ.pop(key, None)
+    if proxy:
+        for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            os.environ[key] = proxy
+
+
+def _apply_browser_proxy(options):
+    if BROWSER_PROXY:
+        options.set_proxy(BROWSER_PROXY)
 
 
 def _retry(fn, tries=3, delay=2.0, what=""):
@@ -273,8 +393,7 @@ def solve_turnstile(headless=False, timeout=90):
     opts.set_timeouts(base=3, page_load=30, script=30)
     if BROWSER_PATH:
         opts.set_browser_path(BROWSER_PATH)
-    if BROWSER_PROXY:
-        opts.set_proxy(BROWSER_PROXY)
+    _apply_browser_proxy(opts)
     for flag in ("--no-first-run", "--no-sandbox", "--disable-dev-shm-usage",
                  "--disable-background-networking", "--mute-audio",
                  "--disable-gpu", "--window-size=1280,900"):
@@ -563,14 +682,15 @@ def guide():
     except ValueError:
         count = 5
     if count <= 0:
-        return count, 1, True, MAIL_CHANNELS[0][0]
+        return count, 1, True, MAIL_CHANNELS[0][0], ""
     try:
         threads = int(_ask("② 并发线程        [默认 3]: ", "3"))
     except ValueError:
         threads = 3
     hl = _ask("③ 隐藏浏览器窗口   [Y/n]: ", "Y").lower()
     headless = not hl.startswith("n")
-    print("④ 邮箱渠道:")
+    proxy = _choose_proxy()
+    print("⑤ 邮箱渠道:")
     for index, (_, name) in enumerate(MAIL_CHANNELS, 1):
         print(f"   {index}. {name}")
     while True:
@@ -583,7 +703,7 @@ def guide():
     print("-" * 52)
     print(f"  → 注册 {count} 个 · 并发 {threads} · {'隐藏窗口' if headless else '显示窗口'} · {mail_name}")
     print("-" * 52)
-    return count, threads, headless, mail_provider
+    return count, threads, headless, mail_provider, proxy
 
 
 def run_round(count, threads, headless, mail_provider):
@@ -623,10 +743,11 @@ def run_round(count, threads, headless, mail_provider):
 
 def main():
     # 跑完一轮即结束，等用户按键退出（不再回引导循环）
-    count, threads, headless, mail_provider = guide()
+    count, threads, headless, mail_provider, proxy = guide()
     if count <= 0:
         print("已退出。")
         return 0
+    _apply_proxy(proxy)
     run_round(count, threads, headless, mail_provider)
     try:
         input("按任意键退出…")

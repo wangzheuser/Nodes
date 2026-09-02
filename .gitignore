@@ -6,6 +6,7 @@ venv/
 
 # Local credentials and sessions
 proxyscrape_token.json
+proxy_config.json
 *.token.json
 
 # Generated accounts and proxy credentials

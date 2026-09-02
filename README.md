@@ -22,7 +22,7 @@ ProxyScrape 注册与代理导出工具。浏览器仅用于获取 Turnstile tok
 | `mail_providers.py` | 项目内置的零配置临时邮箱客户端 |
 | `proxyscrape_auth.py` | ProxyScrape 登录、注册与 Token 管理封装 |
 | `turnstilePatch/` | 项目内置的浏览器扩展 |
-| `启动注册.bat` | Windows 启动脚本 |
+| `start.bat` | Windows 启动脚本 |
 | `account/` | 本地账号与 Token 输出，不进入 Git |
 | `node/` | 本地代理账号和节点输出，不进入 Git |
 
@@ -39,7 +39,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-`启动注册.bat` 会优先使用项目内的 `.venv`。
+`start.bat` 会优先使用项目内的 `.venv`。
 
 ## 本地隐私配置
 
@@ -63,6 +63,21 @@ python .\proxyscrape_register.py
 ```
 
 这些值只存在于当前 PowerShell 进程，不会写入仓库。
+
+### 交互式代理
+
+运行 `start.bat` 后可在向导中输入一个统一的 HTTP/HTTPS 代理。该代理同时用于
+Turnstile 浏览器、临时邮箱、注册、验证和代理列表请求。支持以下格式：
+
+```text
+127.0.0.1:7890
+http://127.0.0.1:7890
+http://username:password@127.0.0.1:7890
+```
+
+代理选择会写入 Git 忽略的 `proxy_config.json`，下次运行直接回车即可复用；控制台不会
+显示其中的用户名和密码。输入 `direct` 会保存直连模式并忽略继承的代理环境变量。
+没有本地配置时，默认值依次读取 `CHROME_PROXY`、`HTTPS_PROXY`、`HTTP_PROXY`。
 
 ## 切换 YYDS 域名
 
@@ -98,7 +113,7 @@ PowerShell：
 python .\proxyscrape_register.py
 ```
 
-或双击 `启动注册.bat`。如果 Python 不在 PATH 中，可先设置：
+或双击 `start.bat`。如果 Python 不在 PATH 中，可先设置：
 
 ```powershell
 $env:PYTHON_EXE = "D:\path\to\python.exe"
