@@ -52,6 +52,7 @@ PS_LOGIN = f"{PS_BASE}/v2/v4/account/auth/login"
 PS_ME = f"{PS_BASE}/v2/v4/account/auth/me"
 PS_VERIFY_EMAIL = f"{PS_BASE}/v2/v4/account/verify-email"
 PS_RESEND = f"{PS_BASE}/v2/v4/account/reset-verification-code"
+PS_CLAIM_TRIAL = f"{PS_BASE}/v2/v4/account/premium/claim-trial"
 PS_SIGNUP_PAGE = f"{PS_BASE}/v2/sign-up"
 PS_SITEKEY = "0x4AAAAAAAFWUVCKyusT9T8r"
 
@@ -541,8 +542,42 @@ def whoami(session, access_token):
 
 
 # ── 拉取免费 datacenter 代理 ────────────────────────────
+def claim_trial(access_token):
+    """注册接口只建账号，Premium trial 子账号需在邮箱验证后显式领取
+    （dashboard 的 onboarding 向导同样调 claim-trial）。已领取时复用现有子账号。
+    返回 trial 子账号 ID，未获得返回空串。"""
+    h = {"Authorization": f"Bearer {access_token}", "User-Agent": UA,
+         "Origin": PS_BASE, "Referer": f"{PS_BASE}/v2/onboarding"}
+
+    def _claim():
+        r = requests.post(PS_CLAIM_TRIAL, headers=h, timeout=30)
+        if r.ok and r.json().get("success"):
+            log("Premium trial 已激活")
+            return r.json().get("account_id") or ""
+        if "already claimed" in r.text.lower():
+            log("Premium trial 此前已领取")
+            return ""
+        raise RuntimeError(f"claim-trial {r.status_code}: {r.text[:120]}")
+
+    try:
+        aid = _retry(_claim, tries=2, delay=3, what="claim-trial")
+    except Exception as exc:
+        log(f"[!] claim-trial 失败: {str(exc)[:120]}")
+        aid = ""
+    if aid:
+        return aid
+
+    def _me():
+        r = requests.post(PS_ME, headers=h, timeout=25)
+        r.raise_for_status()
+        subs = r.json().get("associatedSubaccounts") or []
+        return subs[0].get("AccountID") if subs else ""
+
+    return _retry(_me, tries=3, delay=3, what="me")
+
+
 def fetch_proxies(access_token, account_id):
-    """注册后 Premium trial 自带 100 个 datacenter 共享代理。
+    """trial 子账号自带 100 个 datacenter 共享代理。
     从 overview 拿账密，从 proxy-list 端点拿 ip:port 列表。"""
     h = {"Authorization": f"Bearer {access_token}", "User-Agent": UA, "Origin": PS_BASE}
 
@@ -611,6 +646,8 @@ def _register_once(headless, node_file, mail_provider):
         try:
             subs = userdata.get("associatedSubaccounts") or []
             aid = subs[0].get("AccountID") if subs else None
+            if not aid:
+                aid = claim_trial(access_token)
             if aid:
                 p_user, p_pass, plist = fetch_proxies(access_token, aid)
                 save_proxies(p_user, p_pass, plist, node_file)

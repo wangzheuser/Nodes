@@ -10,6 +10,20 @@ import proxyscrape_register as app
 from mail_providers import FreeCustomAreueallyClient, create_mail_client
 
 
+class FakeResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self.ok = status_code < 400
+        self.text = json.dumps(payload)
+
+    def json(self):
+        return json.loads(self.text)
+
+    def raise_for_status(self):
+        if not self.ok:
+            raise requests.HTTPError(self.text)
+
+
 class MailChannelTest(unittest.TestCase):
     def test_guide_selects_channel_and_extracts_alphanumeric_code(self):
         class FakeClient:
@@ -42,6 +56,31 @@ class MailChannelTest(unittest.TestCase):
             self.assertIs(result, success)
         self.assertEqual([item.args[2] for item in run.call_args_list], ["gonebox", "gonebox"])
         save.assert_called_once_with(success, "accounts.jsonl")
+
+    def test_claim_trial_returns_new_subaccount_id(self):
+        calls = []
+
+        def fake_post(url, **_kwargs):
+            calls.append(url)
+            return FakeResponse(200, {"success": True, "account_id": "trial-account-1"})
+
+        with patch("proxyscrape_register.requests.post", side_effect=fake_post):
+            self.assertEqual(app.claim_trial("access-token"), "trial-account-1")
+        self.assertEqual(calls, [app.PS_CLAIM_TRIAL])
+
+    def test_claim_trial_reuses_already_claimed_subaccount(self):
+        calls = []
+
+        def fake_post(url, **_kwargs):
+            calls.append(url)
+            if url == app.PS_CLAIM_TRIAL:
+                return FakeResponse(400, {"success": False,
+                                          "error": "You have already claimed the Premium free trial."})
+            return FakeResponse(200, {"associatedSubaccounts": [{"AccountID": "trial-account-2"}]})
+
+        with patch("proxyscrape_register.requests.post", side_effect=fake_post):
+            self.assertEqual(app.claim_trial("access-token"), "trial-account-2")
+        self.assertEqual(calls, [app.PS_CLAIM_TRIAL, app.PS_ME])
 
     def test_mail_client_is_loaded_from_this_project(self):
         client = create_mail_client({"mail": {"provider": "fce_areueally"}})
